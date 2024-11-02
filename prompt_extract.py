@@ -224,6 +224,8 @@ def get_jpg_size(image_path):
 
 
 def main():
+    recipient_email = os.environ.get('RECIPIENT_EMAIL') or RECIPIENT_EMAIL
+
     # Create the parser
     parser = argparse.ArgumentParser(description="""
     Extracts ComfyUI prompt and workflows from a PNG.
