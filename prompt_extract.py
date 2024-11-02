@@ -282,6 +282,9 @@ def main():
     # Process the files
     for file_name in args.files:
         logging.info(f"Processing file: {file_name}")
+        if not os.path.isfile(file_name):
+           logger.info(f'- Missing or not a file')
+           continue
         if file_name.endswith('.png'):
             s, prompt, workflow, w, h = read_png(file_name)
             # Save the prompt
