@@ -66,6 +66,9 @@ def read_png(file):
             elif keyword == b'workflow':
                workflow = json_data
                logging.debug(f'  - Workflow')
+            else:
+               logging.debug(f'  - {keyword}??')
+               logging.debug(f'    {json_data}')
         elif type == b'IEND':
             break
         offset += size+12
