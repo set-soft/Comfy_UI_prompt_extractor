@@ -15,17 +15,106 @@
 # The original PNG file remains untouched, you get new files.
 #
 import argparse
+# from dataclasses import dataclass
 import json
 import os
 import re
 import shutil
-from struct import unpack
+from struct import unpack, pack
 import subprocess
 import logging
 QUALITY = 85
 RECIPIENT_EMAIL = 'salvador@inti.gob.ar'
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+ID_WORKFLOW = 270
+ID_PROMPT = 271
 
+
+#########################################################################################
+# WEBP Code
+#########################################################################################
+
+def read_webp(webp_data):
+    chunks = []
+    offset = 12  # Skip the RIFF header (4 bytes for "RIFF" and 4 bytes for the length)
+    w = h = 0
+
+    while offset < len(webp_data):
+        chunk_type = webp_data[offset:offset+4].decode('ascii')
+        chunk_size = unpack('<I', webp_data[offset+4:offset+8])[0]
+        chunk_data = webp_data[offset+8:offset+8+chunk_size]
+        # Store chunk information
+        logging.debug(f'- Chunk {chunk_type} ({chunk_size})')
+        if chunk_type == 'EXIF':
+            workflow, prompt = parse_exif(chunk_data)
+        else:
+            if chunk_type == 'VP8X':
+                w1, w2, h1, h2 = unpack('<HBHB', chunk_data[4:10])
+                w = w1+256*w2+1
+                h = h1+256*h2+1
+                logging.debug(f'  - Size {w}x{h}')
+            chunks.append({'type': chunk_type, 'size': chunk_size, 'data': chunk_data})
+        # Move the offset to the next chunk
+        offset += 8 + chunk_size
+    return chunks, prompt, workflow, '', w, h
+
+
+def parse_exif(data):
+    workflow = prompt = None
+    if data[0:2] == b'II':
+        endian = '<'
+    elif data[0:2] == b'MM':
+        endian = '>'
+    else:
+        logging.error('Malformed EXIF')
+        return workflow, prompt
+    magic = unpack(endian+'h', data[2:4])[0]
+    if magic != 42:
+        logging.error('Malformed TIFF data')
+        return workflow, prompt
+    offset = unpack(endian+'I', data[4:8])[0]
+    ifds = unpack(endian+'H', data[offset:offset+2])[0]
+    offset += 2
+    cnt = 0
+    entries = []
+    while cnt < ifds and offset < len(data):
+        id = unpack(endian+'H', data[offset:offset+2])[0]
+        kind = unpack(endian+'H', data[offset+2:offset+4])[0]
+        values = unpack(endian+'I', data[offset+4:offset+8])[0]
+        voffset = unpack(endian+'I', data[offset+8:offset+12])[0]
+        if kind != 2:
+            loggin.error(f'Unknown IFD type {kind}')
+        elif id != ID_WORKFLOW and id != ID_PROMPT:
+            logging.error(f'Unknown IFD id {id}')
+        else:
+            payload = data[voffset:voffset+values]
+            if id == ID_WORKFLOW:
+                assert payload.startswith(b'Workflow:')
+                workflow = json.loads(payload[9:-1].decode('utf-8'))
+            else:
+                assert payload.startswith(b'Prompt:')
+                prompt = json.loads(payload[7:-1].decode('utf-8'))
+        offset += 12
+        cnt += 1
+    return workflow, prompt
+
+
+def save_webp(chunks , file_path):
+    # RIFF header + WEBP header
+    riff_header = b'RIFF' + pack('<I', sum(chunk['size'] + 8 for chunk in chunks) + 4) + b'WEBP'
+    # Rebuild the file without text chunks
+    webp_data = riff_header
+    for chunk in chunks:
+        webp_data += chunk['type'].encode('ascii')  # 4-byte chunk type
+        webp_data += pack('<I', chunk['size'])  # 4-byte chunk size
+        webp_data += chunk['data']  # Chunk data
+    with open(file_path, 'wb') as f:
+        f.write(webp_data)
+
+
+#########################################################################################
+# PNG Code
+#########################################################################################
 
 def read_png(file):
     with open(file, 'rb') as f:
@@ -35,8 +124,10 @@ def read_png(file):
     w = h = -1
     prompt = workflow = ''
     if s[0:8] != b'\x89PNG\r\n\x1a\n':
-        logging.error('Not a PNG')
-        return None, None, None
+        if s[0:4] != b'RIFF':
+            logging.error('Not a PNG or WEBP')
+            return None, None, None, None, None, None
+        return read_webp(s)
     logging.debug('Parsing PNG chunks')
     while offset < len(s):
         size, type = unpack('>L4s', s[offset:offset+8])
@@ -66,6 +157,9 @@ def read_png(file):
             elif keyword == b'workflow':
                workflow = json_data
                logging.debug(f'  - Workflow')
+            elif keyword == b'parameters':
+               parameters = json_data
+               logging.debug(f'  - WebUI data')
             else:
                logging.debug(f'  - {keyword}??')
                logging.debug(f'    {json_data}')
@@ -74,10 +168,13 @@ def read_png(file):
         offset += size+12
     if w == -1:
         raise TypeError('Broken PNG, no IHDR chunk')
-    return s, prompt, workflow, w, h
+    return s, prompt, workflow, parameters, w, h
 
 
 def write_png(s, file):
+    if isinstance(s, list):
+        save_webp(s, file)
+        return
     offset = 8
     with open(file, 'wb') as f:
         f.write(b'\x89PNG\r\n\x1a\n')
@@ -90,13 +187,17 @@ def write_png(s, file):
             offset += size+12
 
 
-def save_text(fname, what, json_data):
+def save_text(fname, what, json_data, src_ext):
     if not json_data:
         return None
-    name = fname.replace('.png', f'_{what}.json')
+    ext = 'txt' if what == 'param' else 'json'
+    name = fname.replace(src_ext, f'_{what}.{ext}')
     logging.debug(f'Writing `{what}` to `{name}`')
     with open(name, 'w') as f:
-        json.dump(json_data, f, indent=2)
+        if ext == 'txt':
+            f.write(json_data)
+        else:
+            json.dump(json_data, f, indent=2)
     return name
 
 
@@ -154,9 +255,9 @@ def extract_seed(prompt):
     return None
 
 
-def convert2jpg(fname, quality, keep, out=None):
+def convert2jpg(fname, quality, keep, ext, out=None):
     input_file = fname
-    output_file = out or fname.replace('.png', '.jpg')
+    output_file = out or fname.replace(ext, '.jpg')
     command = ['convert', input_file, '-quality', str(quality), output_file]
     try:
         subprocess.run(command, check=True)
@@ -285,35 +386,42 @@ def main():
         if not os.path.isfile(file_name):
            logger.info(f'- Missing or not a file')
            continue
-        if file_name.endswith('.png'):
-            s, prompt, workflow, w, h = read_png(file_name)
+        is_png = file_name.endswith('.png')
+        is_webp = file_name.endswith('.webp')
+        if is_png or is_webp:
+            ext = '.png' if is_png else '.webp'
+            s, prompt, workflow, parameters, w, h = read_png(file_name)
             # Save the prompt
-            name_prompt = None if args.no_prompt else save_text(file_name, 'prompt', prompt)
+            name_prompt = None if args.no_prompt else save_text(file_name, 'prompt', prompt, ext)
             name_prompt_comp = name_prompt if args.no_compress else compress(name_prompt, args.keep, compress_tool, compress_ext)
             name_prompt_cypher = name_prompt_comp if args.no_cypher else cypher(name_prompt_comp, args.email, args.keep)
             # Save the workflow
-            name_workflow = None if args.no_workflow else save_text(file_name, 'workflow', workflow)
+            name_workflow = None if args.no_workflow else save_text(file_name, 'workflow', workflow, ext)
             name_workflow_comp = name_workflow if args.no_compress else compress(name_workflow, args.keep, compress_tool, compress_ext)
             name_workflow_cypher = name_workflow_comp if args.no_cypher else cypher(name_workflow_comp, args.email, args.keep)
+            # Save the WebUI data
+            name_param = save_text(file_name, 'param', parameters, ext)
+            name_param_comp = name_param if args.no_compress else compress(name_param, args.keep, compress_tool, compress_ext)
+            name_param_cypher = name_param_comp if args.no_cypher else cypher(name_param_comp, args.email, args.keep)
             seed = extract_seed(prompt)
             fname = file_name
             if seed is not None:
                 logging.info(f'Found seed {seed}')
-                fname = fname.replace('.png', f'_{seed}.png')
+                fname = fname.replace(ext, f'_{seed}{ext}')
             if not args.no_size_in_name:
-                fname = fname.replace('.png', f'_{w}x{h}.png')
-            fname = fname.replace('.png', f'_no_prompt.png')
+                fname = fname.replace(ext, f'_{w}x{h}{ext}')
+            fname = fname.replace(ext, f'_no_prompt{ext}')
             if prompt or workflow and not args.no_png:
                 write_png(s, fname)
                 if not args.no_jpg:
-                    convert2jpg(fname, args.quality, args.keep)
+                    convert2jpg(fname, args.quality, args.keep, ext)
                 if args.remove:
                     remove(file_name)
         elif file_name.endswith('.jpg'):
             w, h = get_jpg_size(file_name)
             if w is None:
                 logging.info(f'- Skipping JPG with unknown size')
-            convert2jpg(file_name, args.quality, not args.remove, out=file_name.replace('.jpg', f'_{w}x{h}.jpg'))
+            convert2jpg(file_name, args.quality, not args.remove, '.jpg', out=file_name.replace('.jpg', f'_{w}x{h}.jpg'))
         else:
             logging.info(f'- Skipping unknown extension')
 
