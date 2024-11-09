@@ -40,11 +40,15 @@ def read_webp(webp_data):
     w = h = 0
 
     while offset < len(webp_data):
+        if webp_data[offset] == 0:
+            offset += 1  # WTF?!
+            chunks[-1]['size'] = chunks[-1]['size']+1
+            chunks[-1]['data'] = chunks[-1]['data']+b'\x00'
         chunk_type = webp_data[offset:offset+4].decode('ascii')
         chunk_size = unpack('<I', webp_data[offset+4:offset+8])[0]
         chunk_data = webp_data[offset+8:offset+8+chunk_size]
         # Store chunk information
-        logging.debug(f'- Chunk {chunk_type} ({chunk_size})')
+        logging.debug(f'- {offset} Chunk {chunk_type} ({chunk_size})')
         if chunk_type == 'EXIF':
             workflow, prompt = parse_exif(chunk_data)
         else:
