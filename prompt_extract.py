@@ -38,6 +38,7 @@ def read_webp(webp_data):
     chunks = []
     offset = 12  # Skip the RIFF header (4 bytes for "RIFF" and 4 bytes for the length)
     w = h = 0
+    prompt = workflow = ''
 
     while offset < len(webp_data):
         if webp_data[offset] == 0:
