@@ -384,7 +384,7 @@ def main():
     for file_name in args.files:
         logging.info(f"Processing file: {file_name}")
         if not os.path.isfile(file_name):
-           logger.info(f'- Missing or not a file')
+           logging.info(f'- Missing or not a file')
            continue
         is_png = file_name.endswith('.png')
         is_webp = file_name.endswith('.webp')
