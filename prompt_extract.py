@@ -223,6 +223,7 @@ def compress(name, keep, tool, ext):
         logging.debug(f"Compressed {input_file} to {output_file}")
     except subprocess.CalledProcessError as e:
         logging.error(f"Error running {command}: {e}")
+        exit(1)
     if not keep:
         remove(input_file)
     return output_file
@@ -240,6 +241,7 @@ def cypher(name, email, keep):
         logging.debug(f"Cyphered {input_file} to {output_file}")
     except subprocess.CalledProcessError as e:
         logging.error(f"Error running {command}: {e}")
+        exit(1)
     if not keep:
         remove(input_file)
     return output_file
@@ -268,6 +270,7 @@ def convert2jpg(fname, quality, keep, ext, out=None):
         logging.debug(f"Converted {input_file} to {output_file} with quality {quality}%")
     except subprocess.CalledProcessError as e:
         logging.error(f"Error running {command}: {e}")
+        exit(1)
     if not keep:
         remove(input_file)
     return output_file
