@@ -122,7 +122,7 @@ def read_png(file):
     offset = 8
     ppi = 300
     w = h = -1
-    prompt = workflow = ''
+    parameters = prompt = workflow = ''
     if s[0:8] != b'\x89PNG\r\n\x1a\n':
         if s[0:4] != b'RIFF':
             logging.error('Not a PNG or WEBP')
